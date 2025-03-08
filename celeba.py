@@ -1,157 +1,79 @@
 import os
-import zipfile
-import torch
+import zipfile 
 import gdown
+import torch
+from natsort import natsorted
+from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 import re
-from PIL import Image
+import numpy as np
+import torch
 
-try:
-    from natsort import natsorted
-    SORT_FN = natsorted
-except ImportError:
-    # fallback to regular sorted if natsort is not available
-    SORT_FN = sorted
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+## Create a custom Dataset class
 class CelebADataset(Dataset):
-    """
-    Custom Dataset class for the CelebA dataset. Automatically downloads
-    data and annotations from Google Drive if not found in the specified root_dir.
-
-    Args:
-        root_dir (str): The directory to store (or locate) the CelebA data.
-        transform (callable, optional): Optional transform to be applied
-            on a PIL Image sample.
-    """
-
-    def __init__(self, 
-                 root_dir: str = "../data/celeba",
-                 transform: transforms.Compose = None):
-        super().__init__()
-        self.root_dir = root_dir
-        self.transform = transform
+    def __init__(self, root_dir=os.path.join(CUR_DIR, '../../data/celeba'), transform=None):
+        """
+        Args:
+          root_dir (string): Directory with all the images
+          transform (callable, optional): transform to be applied to each image sample
+        """
+        # Read names of images in the root directory
         
-        self.header = None
+        # Path to folder with the dataset
+        if not os.path.isdir(root_dir):
+            os.makedirs(root_dir)
+        dataset_folder = f'{root_dir}/img_align_celeba/'
+        self.dataset_folder = os.path.abspath(dataset_folder)
+        if not os.path.isdir(dataset_folder):
+            # URL for the CelebA dataset
+            download_url = 'https://drive.google.com/uc?id=0B7EVK8r0v71pZjFTYXZWM3FlRnM'
+            # Path to download the dataset to
+            download_path = f'{root_dir}/img_align_celeba.zip'
+            # Download the dataset from google drive
+            gdown.download(download_url, download_path, quiet=False)
 
-        # The unzipped folder will be <root_dir>/img_align_celeba
-        self.dataset_folder = os.path.join(root_dir, "img_align_celeba")
-        if not os.path.isdir(self.dataset_folder):
-            # If folder doesn't exist, attempt to download & unzip
-            self._download_images()
+#             os.makedirs(dataset_folder)
 
-        # Load file names
-        self.filenames = os.listdir(self.dataset_folder)
-        # Ensure consistent ordering (important if you rely on index-based consistency)
-        self.filenames = SORT_FN(self.filenames)
+            # Unzip the downloaded file 
+            with zipfile.ZipFile(download_path, 'r') as ziphandler:
+                ziphandler.extractall(root_dir)
 
-        # Check for attribute files in the provided folder
-        attr_folder = os.path.join(root_dir, "annotations")
-        if not os.path.isdir(attr_folder):
-            os.makedirs(attr_folder, exist_ok=True)
-            self._download_annotations(attr_folder)
+        image_names = os.listdir(self.dataset_folder)
 
-        # Locate and parse the list_attr_celeba.txt file
-        attr_file_path = os.path.join(attr_folder, "list_attr_celeba.txt")
-        if not os.path.isfile(attr_file_path):
-            raise FileNotFoundError(
-                f"Could not find 'list_attr_celeba.txt' in the annotations folder."
-            )
-
-        # Load attributes
+        self.transform = transform 
+        image_names = natsorted(image_names)
+        
+        self.filenames = []
         self.annotations = []
-        with open(attr_file_path, "r") as f:
-            lines = f.read().splitlines()
-
-        # First line has the number of images, second line has the attribute names
-        # The rest lines each correspond to one image
-        for i, line in enumerate(lines):
-            # line might have variable spaces, so split robustly
-            line = re.sub(r"\s+", " ", line.strip())
-            if i == 0:
-                continue  # number of images
-            elif i == 1:
-                # header line with attribute names
-                self.header = line.split(" ")
-            else:
-                parts = line.split(" ")
-                filename = parts[0]
-                # the rest are attribute labels
-                attr_vals = [int(val) for val in parts[1:]]
-                self.annotations.append((filename, attr_vals))
-
-        # Convert to a dict: filename -> attribute array
-        # so we can quickly look up attributes by filename
-        self.attr_map = {
-            fn: torch.tensor(attr_vals, dtype=torch.long)
-            for fn, attr_vals in self.annotations
-        }
-
-    def _download_images(self):
-        """
-        If the CelebA folder isn't found, download and extract the image dataset from Google Drive.
-        """
-        os.makedirs(self.root_dir, exist_ok=True)
-        zip_path = os.path.join(self.root_dir, "img_align_celeba.zip")
-
-        if not os.path.isfile(zip_path):
-            download_url = "https://drive.google.com/file/d/1gwENu5QhPD0GVD2jYOCq3Kt1m-vyTs1_/"
-            print("Downloading CelebA dataset from Google Drive. This might take a while...")
-            gdown.download(download_url, zip_path, quiet=False, fuzzy=True)
-        else:
-            print(f"Found existing ZIP file at {zip_path}. Skipping download.")
-
-        print(f"Extracting '{zip_path}'...")
-        with zipfile.ZipFile(zip_path, "r") as z:
-            z.extractall(self.root_dir)
-        print("Extraction finished.")
-
-    def _download_annotations(self, annotation_folder):
-        """
-        Download annotations from Google Drive if they are missing.
-        """
-        attr_file_path = os.path.join(annotation_folder, "list_attr_celeba.txt")
-        if not os.path.isfile(attr_file_path):
-            print("Downloading annotations for CelebA...")
-            annotation_url = "https://drive.google.com/file/d/1x8cGdev15fQ6pkVfFo91Aarxv1HzKwWI"
-            gdown.download_folder(annotation_url, output=annotation_folder, quiet=False, fuzzy=True)
-        else:
-            print(f"Annotations already exist in '{annotation_folder}'. Skipping download.")
-
-    def __len__(self):
+        with open(f'{root_dir}/list_attr_celeba.txt') as f:
+            for i, line in enumerate(f.readlines()):
+                line = re.sub(' *\n', '', line)
+                if i == 0:
+                    self.header = re.split(' +', line)
+                else:
+                    values = re.split(' +', line)
+                    filename = values[0].split('.jpg')[0] + '.jpg'
+                    self.filenames.append(filename)
+                    self.annotations.append([int(v) for v in values[1:]])
+                    
+        self.annotations = np.array(self.annotations)    
+              
+    def __len__(self): 
         return len(self.filenames)
 
     def __getitem__(self, idx):
-        """
-        Args:
-            idx (int): index of the sample
-
-        Returns:
-            tuple: (image, info_dict) where:
-                image is the transformed PIL image,
-                info_dict is a dictionary containing:
-                    - 'filename': str
-                    - 'idx': int
-                    - 'attributes': torch.Tensor of shape (#attributes,)
-        """
+        # Get the path to the image 
         img_name = self.filenames[idx]
         img_path = os.path.join(self.dataset_folder, img_name)
-
-        # Load the image
-        img = Image.open(img_path).convert("RGB")
-
-        # Apply transforms
-        if self.transform is not None:
+        img_attributes = self.annotations[idx] # convert all attributes to zeros and ones
+        # Load image and convert it to RGB
+        img = Image.open(img_path).convert('RGB')
+        # Apply transformations to the image
+        if self.transform:
             img = self.transform(img)
-
-        # Fetch attributes (if they exist in the attr_map; some extra files might appear)
-        attributes = self.attr_map.get(img_name, torch.zeros(40, dtype=torch.long))
-
-        # Return both
-        info_dict = {
-            "filename": img_name,
-            "idx": idx,
-            "attributes": attributes
-        }
-        return img, info_dict
+        return img, {'filename': img_name, 'idx': idx, 'attributes': torch.tensor(img_attributes).long()}
+    
