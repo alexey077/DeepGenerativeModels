@@ -96,7 +96,7 @@ class CelebADataset(Dataset):
         zip_path = os.path.join(self.root_dir, "img_align_celeba.zip")
 
         if not os.path.isfile(zip_path):
-            download_url = "https://drive.google.com/file/d/0B7EVK8r0v71pZjFTYXZWM3FlRnM"
+            download_url = "https://drive.google.com/file/d/1gwENu5QhPD0GVD2jYOCq3Kt1m-vyTs1_/"
             print("Downloading CelebA dataset from Google Drive. This might take a while...")
             gdown.download(download_url, zip_path, quiet=False, fuzzy=True)
         else:
